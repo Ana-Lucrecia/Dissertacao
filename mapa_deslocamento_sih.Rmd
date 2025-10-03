@@ -1,0 +1,182 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(fst)
+library(tidyverse)
+library(sf)  # para shapefiles de UF/Municípios
+library(ggplot2)
+#devtools::install_github("rpradosiqueira/brazilmaps")
+library(brazilmaps) # Importando a base de mapas do IBGE
+library(geosphere)
+library(viridis)
+
+```
+
+```{r}
+diretorio <- "C:\\Users\\Nietes02\\Desktop\\Ana\\"
+```
+
+
+
+```{r}
+sih_base <- read.fst(paste0(diretorio,"sih_00a03.fst"))
+
+sih_base$n_internacoes <- 1
+
+
+sih_base03 <- sih_base %>%
+  group_by(MUNIC_RES, MUNIC_MOV) %>%
+  summarise(n_internacoes = sum(n_internacoes))
+
+rm(sih_base)
+
+##
+
+
+sih_base <- read.fst(paste0(diretorio,"sih_04a07.fst"))
+
+sih_base$n_internacoes <- 1
+
+
+sih_base07 <- sih_base %>%
+  group_by(MUNIC_RES, MUNIC_MOV) %>%
+  summarise(n_internacoes = sum(n_internacoes))
+
+
+rm(sih_base)
+
+
+##
+
+
+sih_base <- read.fst(paste0(diretorio,"sih_08a11.fst"))
+
+sih_base$n_internacoes <- 1
+
+
+sih_base11 <- sih_base %>%
+  group_by(MUNIC_RES, MUNIC_MOV) %>%
+  summarise(n_internacoes = sum(n_internacoes))
+
+
+rm(sih_base)
+
+##
+
+sih_base <- rbind(sih_base03, sih_base07, sih_base11)
+
+write.fst(sih_base, paste0(diretorio, "sih_base_desloc.fst"), compress = 100)
+
+```
+
+
+```{r}
+
+
+cidadebr = get_brmap(geo = "City",
+                     class = "sf")
+
+############################################
+cidademg <- subset(cidadebr, State==31)
+
+#############################################
+cidademg <- cidademg %>%
+  select(City, geometry) # seleciona apenas as variaveis que serao usadas
+
+cidademg <- rename(cidademg, "ibge"="City")# renomeia a variavel que contem o codigo ibge
+
+cidademg$ibge <- substr(cidademg$ibge, 1,6) #padroniza o codigo ibge da com a outra base
+
+estadosbr <- get_brmap(geo="State", class = "sf")
+mg <- subset(estadosbr, State==31)
+
+
+
+# Mantendo o sf como está e juntando apenas os dados
+sih_mapa_mg <- right_join(sih_base, cidademg, by=c("MUNIC_RES" = "ibge"))
+
+sih_mapa_mg$n_internacoes[is.na(sih_mapa_mg$n_internacoes)] <-0
+
+
+
+
+sih_mapa_mg <- right_join(sih_mapa_mg, cidademg, by=c("MUNIC_MOV" = "ibge"))
+
+
+```
+
+
+
+
+
+```{r}
+# criar centroides para origem e destino
+sih_mapa_mg <- sih_mapa_mg %>%
+  mutate(
+    geom_origem = st_centroid(geometry.x),   # ajuste se o nome da coluna de geometria for outro
+    geom_destino = st_centroid(geometry.y)
+  ) %>%
+  # extrair coordenadas
+  mutate(
+    x_orig = st_coordinates(geom_origem)[,1],
+    y_orig = st_coordinates(geom_origem)[,2],
+    x_dest = st_coordinates(geom_destino)[,1],
+    y_dest = st_coordinates(geom_destino)[,2]
+  )
+
+
+sih_mapa_mg <- sih_mapa_mg %>%
+  mutate(
+    distancia_km = distHaversine(
+      cbind(x_orig, y_orig),
+      cbind(x_dest, y_dest)
+    ) / 1000
+  )
+
+
+
+# Mantendo apenas fluxos intermunicipais
+destinos <- sih_mapa_mg %>%
+  group_by(MUNIC_RES, geometry.y) %>%
+  summarize(
+    distancia_media_km = mean(distancia_km, na.rm = TRUE)
+  )
+
+```
+
+
+
+
+
+```{r}
+destinos <- st_as_sf(destinos)
+
+ggplot() +
+  geom_sf(data = mg, fill = "gray95", color = "grey60", size = 0.2) +  # mapa base
+  geom_sf(data = destinos, aes(fill = distancia_media_km), color = NA) +  # cor por distância média
+  scale_fill_viridis_c(option = "plasma", name = "Distância média (km)") +
+  theme_minimal() +
+  labs(title = "Municípios de MG: distância média de origem dos pacientes") +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "right"
+  )
+
+```
+
+
+
+
+
+
+
+
+
